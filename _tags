@@ -1,0 +1,6 @@
+true : bin_annot, safe_string
+<_b0> : -traverse
+<tmp> : -traverse
+<src> : include
+<src/tool> : include
+<src/**> : package(cmdliner unix threads b0.std uuidm)

@@ -1,0 +1,909 @@
+{0 [telvm] manual}
+
+{e Telnet to these virtual machines like it's 1998}
+
+{1:basics Basics}
+
+The overarching goal of [telvm] is to make it exceptionally easy to
+login into QEMU virtual machines from the command line, over terminal
+connections. It is just yet another convenient shim over QEMU
+invocations.
+
+{2:data_dir The data directory}
+
+[telvm] manages a file hierarchy located by default in the
+[$XDG_DATA_DIR/telvm] directory.
+
+Most [telvm] commands that accept file paths can start with an [@] to
+refer to the root of this data directory. The [telvm path] command
+outputs paths as resolved by [telvm]:
+
+{@sh[
+telvm path @    # Path to the data directory
+telvm path @images/data.img  # images/data.img file in the data directory
+]}
+
+[telvm] has familiar commands [ls], [cp], [mv] and [rm] which interpret
+these [@] path directly, see {!disk_images} for more details.
+
+[telvm] interprets some of the top-level directories of the data
+directory specially:
+
+{ul
+{- [@telvm] holds files needed by [telvm]. Notably for the Windows support.
+   It is better if you leave that folder in peace, but it's safe to delete
+   (may entail large re-downloads though).}
+{- [@images] holds disk images that are listed on [telvm image list].}
+{- [@boot] holds disk images that are listed on [telvm list].}
+{- [@plans] holds image plans that are listed on
+   [telvm plan list]}}
+
+Except for the behaviour mentioned above these directories have no more
+purpose than that. In general feel free to use and organize the data
+directory the way you see it fit, its yours.
+
+{2:run Getting prompts}
+
+The [telvm run] command runs disk images and shares host directories
+with QEMU. The disk image files you specify on the command line
+specify the boot order and are attached as drives using the best
+available device. Directories you specify on the command line get
+shared with the booted guest OS, see {{!sharing}sharing host
+directories}.
+
+Here's a couple examples that should run out of the box without
+installation process. We copy the image over to [@boot] for
+convenience – they get listed on [telvm list] – but it's not strictly
+needed. To build and run Windows images see {{!winvos_basics}here}.
+
+{@sh[
+# Debian
+# See https://cloud.debian.org/images/cloud/trixie/latest/
+curl -L -O …/debian-13-nocloud-arm64.qcow2
+telvm cp debian-13-nocloud-arm64.qcow2 @boot/debian-13-arm64.qcow2
+telvm run @boot/debian-13-arm64.qcow2  # Login with root, no password
+
+# FreeBSD
+# See https://download.freebsd.org/releases/VM-IMAGES/15.0-RELEASE/
+curl -L -O …/FreeBSD-15.0-RELEASE-arm64-aarch64-ufs.qcow2.xz
+unxz -c FreeBSD-15.0-RELEASE-arm64-aarch64-ufs.qcow2.xz |
+     telvm cp - @boot/freebsd-arm64.qcow2
+telvm run @boot/freebsd-arm64.qcow2  # Login with root, no password
+]}
+
+By default disk images are attached as [virtio-blk] devices or
+[virtio-scsi-cdrom] for those images that end with [.iso]. For now we
+have an exception (TODO get rid of it) on the first drive: [nvme] is
+used because the Windows bootloader can't see VirtIO devices; use the
+syntax described below to override this.
+
+If the bootloader or the guest OS have no VirtIO drivers use the
+option [--no-virtio] otherwise the drives will not be seen by them. In
+this case disk images are attached as [nvme] drives and [.iso] files
+as [sata-cdrom] drives.
+
+Manual overrides are always possible by ending the image with an
+[@DEVICE] specification. For example if you rather boot on an USB
+device or work around the TODO above:
+
+{@sh[
+telvm run @boot/debian-13-arm64.qcow2@usb
+telvm run @boot/debian-13-arm64.qcow2@virtio-blk # Work around TODO above
+]}
+
+See [telvm run --help] for other types of devices, or try to autocomplete
+a final [@].
+
+If you use [telvm run] to install an operating system on a blank disk
+image, specify the target image as the first argument. That way if the
+operating system reboots it boots on the install. For example:
+
+{@sh[
+# See https://alpinelinux.org/downloads/
+curl -L -O …/alpine-virt-3.23.2-aarch64.iso
+telvm image create @boot/alpine-arm64.img
+telvm run @boot/alpine-arm64.img alpine-virt-3.23.2-aarch64.iso
+]}
+
+The [telvm run] command is really just a wrapper for a QEMU
+invocation, use option [--dry-run] to see the full QEMU invocation.
+
+The [telvm login] has the same interface as [run] but tries to handle
+the login procedure for you to really get you directly on a prompt.
+
+{2:sharing Sharing host directories}
+
+To share a directory of your host directly add it to the run command
+line. Note however that depending on what you do it may be much faster
+to make a disk image and run with the disk image.
+
+For now the default mounts it as [virtio-9p-pci] device, but that
+needs some operations on the guest and is not supported on Windows, so
+it may change in the future.
+
+{@sh[
+telvm run @boot/debian-13-arm64.qcow2 dir  # login
+…
+# For the session
+mkdir dir
+mount -t 9p -o trans=virtio,version=9p2000.L dir dir
+
+# To Persist edit /etc/fstab and
+dir /root/dir 9p trans=virtio,version=9p2000.L   0   0
+mount -a
+]}
+
+For Windows the solution for now is to use an [@smb] device. You need
+to make sure that your WinVOS image has the
+[Microsoft-WinVOS-RemoteFS-Package] package. It's a bit limited
+because for now you can share a single directory with it (TODO
+get rid of this by operating our [smbd])
+
+{@sh[
+telvm run @boot/winvos-arm64.vhdx dir@smb # login
+…
+PS C:\Windows\System32> ls \\10.0.2.4\qemu\
+]}
+
+{2:graphics Getting graphics}
+
+If you still want to access a GUI use the [-g] and/or the [--use-ramfb]
+option. In this case if the guest OS has no USB drivers use the option
+[--no-usb-input].
+
+TODO clarify virtio GPU behaviour.
+
+On debian
+{[
+sudo apt install xorg xserver-xorg-video-all
+]}
+
+{2:random_tips Random tips}
+
+{3:ui_tips UI tips}
+
+{ul
+{- Use [C-a c] to enter the QEMU monitor which has a few
+   useful {{:https://www.qemu.org/docs/master/system/monitor.html}commands}.}
+{- To shutdown the prompt use [poweroff] on FreeBSD or Linux and
+   [shutdown /p] on Windows.}
+{- To quit abruptly use [C-a x] because [C-c] is redirected to the running OS.
+   To quit less abrutly use [C-a c] to enter the QEMU monitor and issue
+   [system_powerdown], if that has no effect then end with [quit].}
+{- In Windows GUI. To right-click without one. Focus the element and
+   [shift-F10].}
+{- In Windows GUI. To access terminal windows or task manager in the GUI
+   right-click the windows menu in the task bar.}}
+
+{3:resize Resizing a disk image}
+
+On debian.
+
+{@sh[
+qemu-img resize bla.qcow2 +2G
+telvm run bla.qcow2 # Login
+…
+apt install cloud-guest-utils
+lsblk -p # Spot the block device of the disk $(dev) and partition $(n)
+growpart $(dev) $(n)
+resize2fs "$(dev)p$(n)"
+]}
+
+{1:disk_images Working with disk images}
+
+The [telvm image create] command creates disk images. Additionaly
+[telvm] provides familiar commands [ls], [cp], [mv] and [rm] that act
+on the files contained in disk images mostly like their counterpart Unix
+utilities do. The [with-cwd] command allows to run an arbitrary tool
+from your host operating system in the directory of a disk image.
+
+These operations act on the first partition of the disk image which
+must have an MBR or GPT partition table. The file system of that
+partition must be moutable by your host operating system. In general
+using a raw disk image with the
+{{:https://en.wikipedia.org/wiki/exFAT}exFAT file system} is a good
+way of ensuring this out of the box on at least Linux, MacOS and
+Windows (FreeBSD
+{{:https://docs.freebsd.org/en/books/handbook/filesystems/#ex-fat}needs
+FUSE}). That's what [telvm image create]s by default. However these
+disk images may not be bootable if your bootloader can't read exFAT
+file systems (e.g. the Windows bootloader it seems).
+
+To refer to a path in a disk image just provide the path to the disk
+image and then continue as if it was a directory. For example to refer
+to the [/usr] directory in an image [linux.img] you write
+[linux.img/usr]; shell completion, if enabled, will work too.
+
+[telvm]'s operations do not generally depend on syntactic path
+directoryness (a.k.a trailing slash). However this is not the case for disk
+images: [linux.img] refers to the disk image on the host system while
+[linux.img/] refers to the root of the disk image's file system.
+
+This section ends with a small tutorial on how to use these
+commands which you can skip if you are not more interested than
+that – they {e should} also be unsuprising.
+
+{@sh[
+# Create a 50 MB raw disk image formatted with exFAT
+telvm image create --size 50M @images/data.img
+telvm image list                # Spot your image
+telvm ls -R @images/data.img    # The disk image file
+telvm ls -R @images/data.img/   # The root of the disk image's file system
+]}
+
+We created this image in the [images] directory of the data
+directory. For this reason it gets listed in the output of [telvm
+image list]. Let's add some data in and out from this image:
+
+{@sh[
+# Have a file hierarchy
+mkdir -p /tmp/hey
+echo "Not much" > /tmp/hey/README.md
+
+# Copy the file hierarchy to the disk image
+telvm cp -r /tmp/hey @images/data.img/
+telvm ls -R @images/data.img/
+
+# Copy the file hierarchy in the disk image back to the host
+telvm cp -r @images/data.img/hey /tmp/ho
+telvm ls -R /tmp/ho
+
+# The - path can be used for stdin and stdout
+telvm cp - @images/data.img/README.md < /tmp/hey/README.md
+telvm cp @images/data.img/README.md -
+]}
+
+Bear in mind that you can't use globbing on disk image file paths:
+your shell resolves these on the host file system and doesn't peek
+into the files. If you want to copy the contents of a directory to
+another one you can use option [-c]. This is useful to act on the root
+of an image to copy it to another one:
+
+{@sh[
+telvm image create --size 5M other.img  # in the cwd
+telvm cp -r @images/data.img/ other.img/  # Copies to other.img/data.img/
+telvm cp -rc @images/data.img/ other.img/ # Copies content to other.img/
+telvm ls -R other.img/
+]}
+
+To invoke arbitrary tools (e.g. your VCS) in a directory of the disk image
+use the [with-cwd] command:
+
+{@sh[
+telvm with-cwd @images/data.img/hey -- ls
+telvm with-cwd @images/data.img/ -- $SHELL
+ls
+^D
+]}
+
+The [with-cwd] command behaves differently than [telvm]'s [ls], [cp],
+[mv] and [rm] commands as far as paths are concerned. Paths that you
+write after the [--] token cannot use [@] paths or disk image file
+completion. They can escape also the mount point so be careful. For
+example:
+
+{@sh[
+telvm cp /tmp/ho @images/data.img/../hey  # Errors
+
+# This writes in the directory above the temporary mount point (if permitted)
+telvm with-cwd @images/data.img/ -- cp /tmp/ho ../hey
+]}
+
+To cleanup our experiments.
+
+{@sh[
+telvm rm -r /tmp/ho              # Delete our data on the host
+telvm rm -r @images/data.img/hey # Delete some data from the image
+telvm rm @images/data.img        # Delete the image
+telvm rm other.img
+]}
+
+{1:winvos Windows Validation OS}
+
+{2:winvos_basics Basics}
+
+[telvm] has specific support for
+{{:https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/validation-os-overview?view=windows-11}Windows
+Validation OS} (WinVOS) via the [winvos] subcommand. In fact this was
+the purpose of [telvm] in the first place, to get you a Windows prompt
+without clicking or administrative fuss.
+
+The support files for WinVOS can be downloaded or checked
+for freshness by issuing:
+
+{@sh[
+telvm winvos update
+telvm winvos update --check
+]}
+
+The first time you try to create a WinVOS OS image, there will be a
+{{!bootstrap}bootstrap procedure} which is sadly not yet fully
+unattended (but not too horrible, {{!old_bootstrap}trust me}). The
+goal is to devise an Windows imager image whose purpose is to create
+bespoke WinVOS images. It is invoked automatically on [create] but it
+can be invoked manually with:
+
+{@sh[
+telvm winvos bootstrap
+]}
+
+This boots you into a graphical [cmd.exe] prompt on which you
+have to find out the right keys on your keyboard to type:
+
+{@sh[
+cd /d E:
+bootstrap.cmd
+]}
+
+After the shutdown you can create new WinVOS images
+unattended for a given architecture with for example:
+
+{@sh[
+telvm winvos create @boot/winvos-arm64.vhdx
+telvm winvos create @boot/winvos-x86_64.vhdx
+]}
+
+These images can boot into the SAC console with:
+
+{@sh[
+telvm run @boot/winvos-arm64.vhdx
+telvm run @boot/winvos-x86_64.vhdx
+]}
+
+See the next section to login.
+
+If there is any problem you may want to check the log of the last
+[telvm winvos create] operation with:
+
+{[
+telvm winvos log --last
+]}
+
+{2:winvos_sac SAC console login}
+
+To login in your WinVOS image via the {{:https://learn.microsoft.com/en-us/troubleshoot/azure/virtual-machines/windows/serial-console-windows#use-serial-console}Windows SAC console}:
+
+{@sh[
+telvm run @boot/winvos.vhdx
+]}
+at some point you should get to the SAC console. If the image gets
+stuck before use the graphical console by
+invoking with [-g] and perhaps try {{!windows_sac_notes}these instructions}.
+
+In the SAC console wait for the following to happen. Really wait
+if you are emulating the architecture as it make take a bit of time.
+{@sh[
+SAC>
+EVENT: The CMD command is now available.
+SAC>
+]}
+Follow up with:
+{@sh[
+SAC> cmd
+The Command Prompt session was successfully launched.
+]}
+Now type [ESC-TAB RET] and login with [admin/1234] or whichever user
+your build plan configured to create on first boot.
+
+If you succeded up to here, type [pwsh] from that [cmd.exe] to get a more
+(but typed) Unix experience, [cp], [mv], [rm], [cd], [ls] invocations work
+as expected.
+{@pwsh[
+Microsoft Windows [Version 10.0.26100.7309]
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+C:\Windows\System32>pwsh
+PowerShell 7.5.4
+PS C:\Windows\System32>ls
+[…]
+PS C:\Windows\System32> Invoke-WebRequest -Uri https://example.org
+[…]
+]}
+
+{3:windows_sac_notes Notes on enabling SAC from the imager}
+
+On Arm64 the SAC console works out of the box once the
+[Microsoft-OneCore-SerialConsole-Package] is installed. On [x86_64] it
+needs to be explicitely enabled. We tried to do so by installing the
+boot files with [bcdboot] on the [.vhdx] mounted by QEMU in [D:] by
+the imager but it's not picked up by susbequent boots. So we mount the
+hidden [SYSTEM] partition of the [vhdx] by its GUID (TODO brittle
+currently hardcoded) and enable it on this partition, see the script
+for details:
+
+{[
+telvm winvos plan base -a x86_64 --script
+]}
+
+If somehow that plan fails or the hardcoded GUID changed, boot the
+graphical system with with [telvm run -g] and invoke in the graphical
+[cmd.exe]:
+
+{[
+bcdedit /ems on
+bcdedit /ems /emssettings emsport:1 emsbaudrate:115200
+shutdown /p
+]}
+
+{2:making_your_own Making your own images}
+
+To make your own bespoke image you need to write a {{!plan_files}plan
+file}. For example you can start with the plan file used by
+default by [telvm winvos create]:
+
+{@sh[
+telvm winvos plan base > myimage.ini
+]}
+
+Tweak the plan as you wish, see the available {{!plan_keys}keys} and then
+
+{@sh[
+telvm winvos create myimage-arm64.vhdx --plan myimage.ini
+telvm run my-image-arm64.vhdx
+]}
+
+If things seem off see {!winvos_imaging_trouble} because for now
+failures are not reported back to [winvos create] (TODO).
+
+{3:winvos_pkgs WinVOS packages}
+
+The [telvm winvos package] helps to inspect WinVOS packages. To list
+packages simply issue:
+
+{@sh[
+telvm winvos package       # List package of your host architecture
+telvm winvos package -a x86_64  # Those on x86_64
+]}
+
+Use the option [--list-contents] to see what they contain:
+
+{@sh[
+telvm winvos package Microsoft-OneCore-SerialConsole-Package --list-contents
+]}
+
+{3:winvos_imaging_trouble Troubleshooting image creation}
+
+The last build log can be consulted with
+
+{@sh[
+telvm log --last
+]}
+
+To avoid shutdown after imaging and log in into the imager SAC console use:
+
+{@sh[
+telvm winvos create myimage-arm64.vhdx --plan myimage.ini -v --plan-no-shutdown
+… have fun
+C:\Windows\System32> more E:log.txt
+C:\Windows\System32> shutdown /p
+]}
+
+{2:bootstrap Bootstrap procedure details}
+
+This section documents and reproduces via bare [telvm] commands the
+bootstrap procedure performed on [telvm winvos boostrap]. The goal of
+the bootstrap procedure is to produce an image that can run [DISM] for
+unattended production of bespoke WinVOS images from a non-Windows
+host.
+
+This is the result of a lot of trials, looking at cryptic errors and
+hangs. If you know Windows or QEMU any better than we do and see
+obvious improvements, please get in touch to help the amateur.
+See also {{!bootstrap_improvements}notes and improvements} in the
+TODO.
+
+The imager image needs these WinVOS packages:
+
+{ul
+{- [Microsoft-WinVOS-Connectivity-Package] provides USB drivers for input
+   (enables use of QEMU's [usb-kbd] and [usb-tablet] devices). Not
+   stricly needed but allows to interact with the graphical [cmd.exe]prompt
+   on [-g] if needed.}
+{- [Microsoft-OneCore-SerialConsole-Package] provides the SAC console for
+   teletype access.}
+{- [Microsoft-WinVOS-Provisioning-Package] provides the [DISM] and [bcdboot]
+   tools. Note initially we wanted to use this [DISM] in the imager however
+   it cannot "cross compile". So we end up using the architecture dependend
+   executables that are provided in the WinVOS ISOs.}
+{- [Microsoft-WinVOS-Filesystems-Package] provides the ability to mount UDF
+   ISOs.}
+{- [Microsoft-WinVOS-DiskTools-Package] needed to mount [.vhdx] images,
+   also provides useful tools like [diskpart].}}
+
+We also add to the image the following VirtIO Windows drivers for
+better virtualisation performance:
+
+{ul
+{- [viostor] block storage driver, for disk images.}
+{- [vioscsi] SCSI storage drivers, for optical drives ([.iso]s).}
+{- [viogpudo] for GPU passtrough (in case).}
+{- [netkvm] for network passthrough.}}
+
+The bootstrap procedures runs the X86-64 version of WinVOS regardless
+of your host architecture because the [ValidationOS.vhdx] image in the
+ISO can be booted by QEMU into a graphical [cmd.exe] with keyboard
+input via the PS/2 port.
+
+In contrast the ARM ISO cannot be interacted with: ARM systems lack
+such port and the image has no USB drivers and we did not find any
+QEMU hardware that could serve for keyboard input. Both images lack
+direct access to the SAC console.
+
+So first we extract the [ValidationOS.vhdx] file from the WinVOS
+X86-64 ISO.
+
+{@sh[
+telvm winvos update
+telvm cp @telvm/winvos_x86_64.iso/ValidationOS.vhdx ValidationOS_x86_64.vhdx
+chmod u+w ValidationOS_x86_64.vhdx
+]}
+
+This image is bare bones, it of course lacks VirtIO drivers and USB
+drivers. But it can be booted with QEMU as an NVMe device into an
+graphical [cmd.exe] prompt with keyboard input via PS/2 (the crucial
+bit that is missing in the ARM64 [.vdhx]).
+
+If you want to inspect that, execute:
+
+{@sh[
+telvm run ValidationOS_x86_64.vhdx -g --no-usb-input --no-virtio
+]}
+
+While ISOs can be exposed as SATA optical drives, the OS only sees the
+the VirtIO ISO which is an ISO 9660 media. It can't mount the
+WinVOS ISO file because it is an UDF file system and the system
+lacks a driver for it. It is in the [Microsoft-WinVOS-Filesystems-Package].
+
+So we create a temporary exFAT [bootsrap.img] disk image to which:
+
+{ul
+{- We copy the full WinVOS ISO for the architecture of the host – we want
+   to avoid emulation for running our imager.}
+{- We copy the missing [bdcboot.exe] tool that we
+   extract it from x86-64 [Microsoft-WinVOS-DiskTools-Package] package
+   – luckily it seems to work without further [.dll]s.}
+{- We copy the [bootstrap.cmd] script. This script which
+   can be inspected with [telvm winvos plan imager --script] does
+   the following:
+   {ul
+   {- Using the [DISM] tool distributed in the WinVOS ISO, mounts
+      the [.wim], adds the WinVOS packages and drivers we mentioned before.}
+   {- Applies the [.wim] on a blank imager image we mounted on another drive.}
+   {- Tweaks the registry of the imager image to create, on the first boot,
+      a new [admin] user with password [1234]. This is to be able to access the
+      image through the SAC console (the [Administrator] account has no
+      password but if we add one it seems to breaks other things).}
+   {- Tweaks the registry to automatically invoke a
+      [G:\create-image.cmd] (via [Userinit] in [Winlogon]). This allows for
+      unattended imaging.}}}}
+
+So given the host architecture [$HOST_ARCH] the data image used for
+bootstraping is created via:
+
+{@sh[
+telvm image create --size 2G bootstrap.img
+telvm cp -rc @telvm/winvos_$HOST_ARCH.iso/ bootstrap.img/
+telvm with-cwd @telvm/winvos_x86_64.iso/cabs/neutral/ -- \
+      cabextract -p Microsoft-WinVOS-Provisioning-Package.cab \
+      -F '*/bcdboot.exe' | \
+      telvm cp - bootstrap.img/bcdboot.exe
+telvm winvos plan --script imager | \
+      telvm cp - bootstrap.img/bootstrap.cmd
+]}
+
+With this bootstrap image we can access the [DISM] tool distributed in
+the ISO to build our imager image. Initially we wanted to mount the
+[ValidationOS.vhdx] image from the ISO to serve as the base to add
+packages and drivers but that failed (see the notes). So instead we
+mount and act on the [ValidationOS.wim] file and we apply the [.wim]
+file on an additional disk image we create before with:
+
+{@sh[
+telvm image create --partition-scheme mbr --fs fat32 --size 2G \
+      @telvm/winvos-imager-$HOST_ARCH.img
+]}
+
+This disk image can't be exFAT as the Windows bootloader doesn't
+understand it. Since NTFS is not readily available in macOS/Linux we
+use old [Fat32] with an MBR partition scheme (GPT did not seem to sit
+with the Windows bootloader).
+
+With this in place we boot to get to the graphical [cmd.exe]
+
+{@sh[
+telvm run -g --no-usb-input --no-virtio \
+      ValidationOS_x86_64.vhdx \
+      @telvm/winvos-imager-$HOST_ARCH.img \
+      bootstrap.img \
+      @telvm/virtio-win.iso
+]}
+
+at which we need to type:
+
+{@sh[
+cd /d E:
+bootstrap.cmd
+]}
+
+When the system shutdowns, the imager image is ready. It can be run to
+the SAC console with:
+
+{@sh[
+telvm run @telvm/winvos-imager-$HOST_ARCH.img   # SAC console only.
+telvm run -g @telvm/winvos-imager-$HOST_ARCH.img # Graphical and SAC console
+]}
+
+This image is transparently booted and shutdown (via the
+[G:\create-image.cmd] script) on [telvm winvos create] to make WinVOS
+images.
+
+{1:plan_files Plan files}
+
+Plan files are [.INI] files that describe how to build disk images
+and how to run them. The plan that builds the base WinVOS images
+can be inspected with
+
+{[
+telvm winvos plan base
+]}
+
+A plan file is compiled to a target architecture dependent sequence of
+commands that are invoked by the imager to create the image. You can
+see the script with:
+
+{[
+telvm plan script myplan.ini
+]}
+
+and for the base WinVOS image with:
+
+{[
+telvm winvos plan base --script
+telvm winvos plan base --script -a x86_64
+]}
+
+{2:plan_keys Plan key reference}
+
+{b Note.} If an atom has spaces, use double quotes around it.
+
+{3:sec_toplevel [[]]}
+
+Top-level keys.
+
+{ul
+{- [version : uint16], required and must be [1] for now.}}
+
+{3:sec_create [[create]]}
+Section for image creation
+{ul
+{- [copy-dirs : list <atom>], generic copy from a directory relative
+   to the plan image to the OS image. An even list of [(src dst)*] atoms.}}
+
+{3:sec_create_winvos [[create winvos]]}
+Section dedicated to WinVOS image creation
+{ul
+{- [add-wow64-packages : bool]. If [true] automatically add [WOW64] package
+   corresponding to those installed if they exist. Defaults to [false].}
+{- [append-to-path : list <atom>]. List of paths to append to [%path%], each
+   atom gets separated by [;].}
+{- [boot-execs : list <atom>]. List of path to execute (can be [.cmd] files)
+   once the system has booted is ready. No need to login. For now we use
+   [WinLogon] [/UserInit]. Works because WinVOS automatically
+   logs in [Administrator]??}
+{- [copy-boot-files : bool], defaults to [false].
+   Instruct to perform a [bcdboot] invocation on the image with itself.
+   Generally not needed.}
+{- [packages : atom list]. WinVOS packages to install as per [.cab]
+   basename. See [telvm winvos package]}
+{- [virtio-drivers : list <atom>]. VirtIO drivers to include, as per directory
+   name. See [telvm ls @telvm/virtio-win.iso/].}}
+
+{3:sec_create_user [[create user $NAME]]}
+Section dedicated to create a user named [$NAME].
+{ul
+{- [groups : list <atom>]. The list of groups the users belongs to.}
+{- [password : atom]. The users's password}}
+
+{1:todo TODO}
+
+{2:next Next}
+
+- Unattended logins, i.e. implement [telvm login]. These SAC login
+  steps are utterly annoying.
+- Linux is done now but port to BSD (and eventually, Windows of course).
+  Problem on BSD it seems qemu has no -accel. Other than that this should just
+  be the disk mounting business, disk creation with exFAT/FAT32.
+- Blocked on installing [winget]. Needs to be able to install the msixbundle
+  file and/or powershell [AddAppxProvisionedPackage] to work.
+  The `msix` stuff seems to be in the [Microsoft-WinVOS-Deployment-Package]
+  but adding it seems to break the system, both our install or the old
+  powershell install from the WinVOS package get stuck after installing
+  this package (note, it is in the experimental section). Also if
+  we install the [Microsoft-WinVOS-App-Package] (which has for example
+  [notepad]) then the SAC login gets stuck and if we try to login with
+  [-g] the graphical command prompt no longer appears.
+- With the arm64 imager [dism] seems to choke on adding the amd64 virtio
+  drivers, despite using the amd64 [dism] of the WinVOS ISO why?
+{[
+C:\Windows\System32>F:\GenImage\Tools\DISM\amd64\dism.exe /Image:D: /Add-Driver /ForceUnsigned  /driver:G:\viostor\w11\amd64 /driver:G:\vioscsi\w11\amd64 /driver:G:\viogpudo\w11\amd64 /driver:G:\NetKVM\w11\amd64
+
+Deployment Image Servicing and Management tool
+Version: 10.0.26100.7309
+
+Image Version: 10.0.26100.7309
+
+Searching for driver packages to install...
+
+Error: 1726
+
+The remote procedure call failed.
+An error occurred closing a servicing component in the image.
+Wait a few minutes and try running the command again.
+]}
+  Does it mean we eventually can't have just a host imager? OTOH the boostrap
+  process has no problem installing [arm64] drivers via the [x86_64] OS. So
+  currently on [arm64] we need to do:
+{[
+telvm winvos bootstrap --imager-arch=x86_64 @telvm/winvos-imager-x86_64.img
+telvm winvos create @boot/winvos-x86_64.vhdx \
+      --imager=@telvm/winvos-imager-x86_64.img
+]}
+  to have an [x86_64] image with the virtio drivers.
+
+{2:list List}
+
+- [telvm winvos create], add an option to add directories to the plan images.
+- SAC console enabling on x86-64 get rid of that hardcoded GUID.
+- [telvm run] add network forwarding options.
+- [telvm run] get rid of unconditional NVME on first drive. Allow the first
+  drive to be a virtio blk device. Problem is that is doesn't work out of
+  the box with Windows images because the Windows bootloader can't see them.
+  This should likely be solved with the notion of preset to be developed.
+- [telvm run] investigate virtio-fs for sharing host directories, it seems
+  9p is not available for Windows. A bit unclear if it can be made
+  to work outside linux. Virtual FAT filesystem would be nice as it would
+  entail no guest configuration but it looks brittle (the host must
+  not touch the files). Otherwise for windows smb seems the best as it is
+  builtin but the QEMU smb support is crap do it ourselves with an install of
+  smbd.
+- Plan file add [run] QEMU presets with a notion of matching
+  preset on the image basename.
+- Plan file add [create.winvos.reg.$KEY.*] for more general registry setting
+- Test on an x86-64 host that everything works well.
+- Exfat gpt disk images made on linux are not readable on macOS.
+
+{2:bootstrap_improvements Bootstrap ideas and notes}
+
+{ol
+{- When we run [ValidationOS.vhdx] it seems impossible to mount
+   a [ValidationOS.vhdx] (even from another architecture). We thought
+   it was about the [virtdisk.dll] and tried to extracted it from
+   [Microsoft-WinVOS-DiskTools-Package] and add it to the mix but that
+   fails further down the line with a cryptic [0xc03a0014 a virtual disk
+   support provider for the specified file was not found] despite that it
+   seems that [vhdprovider.dll] is around. Suspicion: the disk GUID
+   clashes with the running OS.}
+{- Unattended bootstrap (non windows host). Couple of options.
+   {ul
+   {- Convert [ValidationOS.vhdx] to a
+      raw image, mount the image (need NTFS support on the host), poke the
+      registry to append the bootstrap script in [Userinit] of
+      [Microsoft\Windows NT\CurrentVersion\Winlogon] like we do in the
+      imager. Problem is to find a cross platform tool to do so. On macos
+      nothing seems readily available through brew, [hivexsh] seems unusable
+      to perform a simple thing like updating a single key.}
+   {- Try an offline install
+      of the [Microsoft-OneCore-SerialConsole-Package] in order to
+      directly get the SAC console? We'd also need to update the users to be
+      able to log in. Likely not worth pursuing. This remains
+      attended but at least we don't need to go through an emulatinon run}
+   {- Tried to use the various startup folders from a mount of the image
+      to side step but it seems they are not invoked (no [explorer.exe]
+      shell in winvos ?)}}}
+{- The bootloader(s) need to be able to see the hardware, understand the
+   partitioning scheme and file systems. In particular the Windows
+   bootloader doesn't see virtio based hardware.}
+{- Initially rather than create a new [admin] user to log in to the
+   SAC console we would change the [Administrator] password. But
+   that would lead to some hangs. The system seems to rely on it
+   being blank}}
+
+
+{1:old_howto Old notes}
+
+{2 Install [.msixbundle]}
+
+{@sh[
+dism /online /add-ProvisionedAppxPackage /PackagePath:C:\Path\To\Your\Package\YourAppName.msixbundle /SkipLicense
+
+Add-AppxPackage: -Path pack.msixbundle
+]}
+
+{2 Install winget}
+
+{:https://www.codestudy.net/blog/install-winget-by-the-command-line-powershell/}
+
+
+{:https://gist.github.com/jonahbeckford/1287252fd72d14add44c4f3efb7f9ea9}
+
+{2 Install git-for-windows}
+
+It would be easier to get in winget to work.
+
+{@pwsh[
+Invoke-WebRequest -Uri https://github.com/git-for-windows/git/releases/download/v2.51.0.windows.2/Git-2.51.0.2-arm64.exe -OutFile GitInstaller.exe
+Start-Process -FilePath .\GitInstaller.exe -ArgumentList '/VERYSILENT', '/NORESTART'
+
+Start-Process -FilePath .\GitInstaller.exe -ArgumentList "/SILENT", "/NORESTART", "/DIR=C:\Program Files\Git" -Wait -NoNewWindow
+]}
+
+{@pwsh[
+Invoke-WebRequest -Uri https://github.com/git-for-windows/g
+                                                                                  git/releases/download/v2.51.0.windows.2/MinGit-2.51.0.2-arm64.zip -OutFile git.zip
+Expand-Archive .\git.zip -DestinationPath git
+]}
+
+{1:old_bootstrap Old bootstrap}
+
+The first tentative to bootstrap was using real Windows 11 ISO image
+with a lot of manual operations based on the procedure in described in
+{{:https://gist.github.com/Vogtinator/293c4f90c5e92838f7e72610725905fd}this
+gist} and
+{{:https://linaro.atlassian.net/wiki/spaces/WOAR/pages/28914909194/windows-arm64+VM+using+qemu-system}here}.
+
+May still be useful if you want a "real" Windows environment. Has not
+been tested again, the [telvm] invocations may need adjustments.
+
+Download a Windows 11 ISO image.
+
+{ul
+{- {{:https://www.microsoft.com/en-gb/software-download/windows11arm64}
+    Arm 64 download}. Tested with Windows 11 25H2, language: English
+   International.}
+{- {{:https://www.microsoft.com/en-gb/software-download/windows11}
+   x86_64 download}. Tested Windows 11 25H2, language:
+   English International}}
+
+If you don't care, match the architecture of your own CPU otherwise it
+will be excruciately slow. Let [WINISO] be the path to that ISO file,
+for example:
+
+{@sh[
+WINISO=/tmp/Win11_24H2_EnglishInternational_Arm64.iso
+IMG=win11_arm64.qcow2
+]}
+
+Continue with:
+
+{@sh[
+qemu-img create -f qcow2 $IMG 64G
+telvm run $IMG $WINISO @telvm/virtio-win.iso --no-virtio -g
+]}
+
+and proceed with these steps. In general if an install reboot gets
+stuck on the bootloader screen kill the [telvm] invocation and retry.
+
+{ol
+{- You have to hit a key to load the image otherwise you will get into
+   the bootloader shell (you can invoke the bootloader from
+   [EFI] directory of the ISO in this case).}
+{- Proceed until keyboard selection. Press [shift-F10] run [regedit]
+   Navigate to [HKEY_LOCAL_MACHINE/SYSTEM/Setup] create a key called
+   [LabConfig] and inside it two DWORDS set to 1: [BypassTPMCheck]
+   and [BypassSecureBootCheck].}
+{- Proceed to the drive selection.}
+{- Load the [virtio-blk] driver from [E:\viostor\w11\ARM64]}
+{- The destination disk can now be selected}
+{- Continue with installation until it asks for the network}
+{- At that point install a couple of divers Virtio drivers,
+   first install the virtio-gpu driver
+   [E:\viogpudo\w11\ARM64] also add [E:\vioscsi\w11\ARM64] (?)
+   then install the network driver [E:\NetKVM\w11\ARM64]. Choose
+   the folder with the right architecture.}
+{- If at some point it reboots but fails to startup you get stuck on
+    the bootloader screen. At that point kill the vm disable your
+    network and restart with the [telvm run] command without
+    the [--no-virtio] flag}
+{- When it says 'lost internet connect' use shift-F10 and run [oobe\bypasnro].
+    if it gets stuck on reboot again kill the vm and run again}
+{- The VM can now be run with [telvm run $IMG]}}
