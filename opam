@@ -1,0 +1,47 @@
+opam-version: "2.0"
+name: "telvm"
+synopsis: "Get prompts on virtual machines (including Windows)"
+description: """\
+**WARNING** Telvm is work in progress.
+
+Telvm gets you prompts on [QEMU] virtual machines from your Unix
+terminal. In particular it has support for building and getting
+prompts on Windows via [Windows Validation OS].
+
+Ultimately it is just a managed `$XDG_DATA_DIR/telvm` directory, a
+not so well informed oracle for QEMU invocations and a bit of ISO
+file munging.
+
+Telvm is distributed unders the ISC license.
+
+[QEMU]: https://www.qemu.org/
+[Windows Validation OS]: https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/validation-os-overview?view=windows-11"""
+maintainer: "Daniel Bünzli <daniel.buenzl i@erratique.ch>"
+authors: "The telvm programmers"
+license: "ISC"
+tags: ["vm" "qemu" "windows" "org:erratique"]
+homepage: "https://erratique.ch/software/telvm"
+doc: "https://erratique.ch/software/telvm/doc"
+bug-reports: "https://github.com/dbuenzli/telvm/issues"
+depends: [
+  "ocaml" {>= "5.3.0"}
+  "ocamlfind" {build}
+  "b0" {>= "0.0.6"}
+  "uuidm" {>= "0.9.10"}
+  "cmdliner" {>= "2.0.0"}
+]
+build: [
+  ["ocaml" "pkg/pkg.ml" "build" "--dev-pkg" "%{dev}%"]
+  [
+    "cmdliner"
+    "install"
+    "tool-support"
+    "--update-opam-install=%{_:name}%.install"
+    "_build/src/tool/telvm_main.native:telvm" {ocaml:native}
+    "_build/src/tool/telvm_main.byte:telvm" {!ocaml:native}
+    "_build/cmdliner-install"
+  ]
+]
+dev-repo: "git+https://erratique.ch/repos/telvm.git"
+pin-depends: ["b0.dev" "git+https://erratique.ch/repos/b0.git#master"]
+x-maintenance-intent: ["(latest)"]

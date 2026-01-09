@@ -1,0 +1,35 @@
+{0 Telvm {%html: <span class="version">%%VERSION%%</span>%}}
+
+{b Warning} [telvm] is work in progress, see the {{!page-manual.todo}TODO}.
+
+Telvm gets you prompts on QEMU virtual machines from your Unix
+terminal. In particular it has {{!page-manual.winvos}support} for
+building and getting prompts on Windows via
+{{:https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/validation-os-overview?view=windows-11}Windows
+Validation OS} (WinVOS).
+
+{1:quick_start Quick start}
+
+{@sh[
+telvm winvos create @boot/winvos.vhdx # Will bootstrap, follow instructions
+telvm run @boot/winvos.vhdx
+telvm run @boot/winvos.vhdx -g # If you still want the GUI
+]}
+
+Read the {{!page-manual.winvos_sac}instructions to login} in these WinVOS
+images and more in the {{!page-manual}manual}.
+
+{1:library Library [telvm]}
+
+This is a private library for now, no support.
+
+{!modules:
+Adhoc
+Data_dir
+Data_file
+Disk
+Disk_image
+Plan
+Qemu
+Winvos
+}

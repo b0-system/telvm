@@ -1,0 +1,8 @@
+description = "Get prompts on virtual machines (including Windows)"
+version = "%%VERSION_NUM%%"
+requires = "b0.std cmdliner unix"
+archive(byte) = "telvm.cma"
+archive(native) = "telvm.cmxa"
+plugin(byte) = "telvm.cma"
+plugin(native) = "telvm.cmxs"
+exists_if = "telvm.cma telvm.cmxa"
